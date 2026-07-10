@@ -1,0 +1,77 @@
+--- a/rmw_cyclonedds_cpp/src/rmw_node.cpp
++++ b/rmw_cyclonedds_cpp/src/rmw_node.cpp
+@@ -78,7 +78,9 @@
+ #include "rmw_dds_common/qos.hpp"
+ #include "rmw_dds_common/security.hpp"
+ 
++#include "rosidl_runtime_c/message_initialization.h"
+ #include "rosidl_runtime_c/type_hash.h"
++#include "rosidl_runtime_cpp/message_initialization.hpp"
+ 
+ #include "rosidl_typesupport_cpp/message_type_support.hpp"
+ 
+@@ -4612,6 +4614,33 @@
+   return os.str();
+ }
+ 
++/* Fini and re-initialise a message that dds_take() deserialised into, so the
++   same memory can safely be deserialised into again.  fini releases the heap
++   content (sequences, strings); init restores the constructed state that both
++   the C and C++ deserialisers expect to find. */
++static void refini_message(
++  const rosidl_message_type_support_t * type_supports, void * message)
++{
++  const rosidl_message_type_support_t * ts;
++  if ((ts =
++    get_message_typesupport_handle(
++      type_supports, rosidl_typesupport_introspection_cpp::typesupport_identifier)) != nullptr)
++  {
++    auto members =
++      static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(ts->data);
++    members->fini_function(message);
++    members->init_function(message, rosidl_runtime_cpp::MessageInitialization::ALL);
++  } else if ((ts = // NOLINT
++    get_message_typesupport_handle(
++      type_supports, rosidl_typesupport_introspection_c__identifier)) != nullptr)
++  {
++    auto members =
++      static_cast<const rosidl_typesupport_introspection_c__MessageMembers *>(ts->data);
++    members->fini_function(message);
++    members->init_function(message, ROSIDL_RUNTIME_C_MSG_INIT_ALL);
++  }
++}
++
+ static rmw_ret_t rmw_take_response_request(
+   CddsCS * cs, rmw_service_info_t * request_header,
+   void * ros_data, bool * taken, dds_time_t * source_timestamp,
+@@ -4648,6 +4677,14 @@
+         *taken = true;
+         return RMW_RET_OK;
+       }
++      /* This sample is a response addressed to a different client of the same
++         service (responses are broadcast to every client's reader).  dds_take
++         deserialised it into ros_data; the next iteration -- or the next call
++         with this same buffer -- would deserialise over it and orphan its heap
++         content (sequences, strings), leaking one payload per skipped reply.
++         Release the content and restore ros_data to a freshly initialised
++         message before taking the next sample. */
++      refini_message(&cs->sub->type_supports, ros_data);
+     }
+   }
+   *taken = false;
+@@ -4972,6 +5009,7 @@
+       type_support->data, type_support->typesupport_identifier);
+     sub_type_hash = type_supports->request_typesupport->get_type_hash_func(
+       type_supports->request_typesupport);
++    sub->type_supports = *type_supports->request_typesupport;
+     pub_type_support = create_response_type_support(
+       type_support->data, type_support->typesupport_identifier);
+     pub_type_hash = type_supports->response_typesupport->get_type_hash_func(
+@@ -4991,6 +5029,7 @@
+       type_support->data, type_support->typesupport_identifier);
+     sub_type_hash = type_supports->response_typesupport->get_type_hash_func(
+       type_supports->response_typesupport);
++    sub->type_supports = *type_supports->response_typesupport;
+     pubtopic_name =
+       make_fqtopic(ROS_SERVICE_REQUESTER_PREFIX, service_name, "Request", qos_policies);
+     subtopic_name = make_fqtopic(ROS_SERVICE_RESPONSE_PREFIX, service_name, "Reply", qos_policies);
