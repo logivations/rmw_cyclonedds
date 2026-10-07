@@ -1846,6 +1846,8 @@ extern "C" rmw_ret_t rmw_deserialize(
       MessageTypeSupport_c msgts(members);
       ok = msgts.deserializeROSmessage(sd, ros_message, nullptr);
     } else {
+      // the failed lookup set the rcutils error state; reset it as get_typesupport() does
+      rcutils_reset_error();
       if ((ts =
         get_message_typesupport_handle(
           type_support, rosidl_typesupport_introspection_cpp::typesupport_identifier)) != nullptr)
@@ -1855,6 +1857,7 @@ extern "C" rmw_ret_t rmw_deserialize(
         MessageTypeSupport_cpp msgts(members);
         ok = msgts.deserializeROSmessage(sd, ros_message, nullptr);
       } else {
+        rcutils_reset_error();
         RMW_SET_ERROR_MSG("rmw_serialize: type support trouble");
         return RMW_RET_ERROR;
       }
@@ -4617,11 +4620,25 @@ static const std::string csid_to_string(const client_service_id_t & id)
 /* Fini and re-initialise a message that dds_take() deserialised into, so the
    same memory can safely be deserialised into again.  fini releases the heap
    content (sequences, strings); init restores the constructed state that both
-   the C and C++ deserialisers expect to find. */
+   the C and C++ deserialisers expect to find.
+   A failed typesupport lookup sets the rcutils error state; reset it as
+   get_typesupport() does, otherwise it stays set on this thread and the next
+   unrelated error prints rcutils' "This error state is being overwritten". */
 static void refini_message(
   const rosidl_message_type_support_t * type_supports, void * message)
 {
   const rosidl_message_type_support_t * ts;
+  if ((ts =
+    get_message_typesupport_handle(
+      type_supports, rosidl_typesupport_introspection_c__identifier)) != nullptr)
+  {
+    auto members =
+      static_cast<const rosidl_typesupport_introspection_c__MessageMembers *>(ts->data);
+    members->fini_function(message);
+    members->init_function(message, ROSIDL_RUNTIME_C_MSG_INIT_ALL);
+    return;
+  }
+  rcutils_reset_error();
   if ((ts =
     get_message_typesupport_handle(
       type_supports, rosidl_typesupport_introspection_cpp::typesupport_identifier)) != nullptr)
@@ -4630,14 +4647,8 @@ static void refini_message(
       static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(ts->data);
     members->fini_function(message);
     members->init_function(message, rosidl_runtime_cpp::MessageInitialization::ALL);
-  } else if ((ts = // NOLINT
-    get_message_typesupport_handle(
-      type_supports, rosidl_typesupport_introspection_c__identifier)) != nullptr)
-  {
-    auto members =
-      static_cast<const rosidl_typesupport_introspection_c__MessageMembers *>(ts->data);
-    members->fini_function(message);
-    members->init_function(message, ROSIDL_RUNTIME_C_MSG_INIT_ALL);
+  } else {
+    rcutils_reset_error();
   }
 }
 
