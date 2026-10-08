@@ -1,0 +1,19 @@
+--- a/rmw_cyclonedds_cpp/src/rmw_node.cpp
++++ b/rmw_cyclonedds_cpp/src/rmw_node.cpp
+@@ -1844,6 +1844,8 @@
+       MessageTypeSupport_c msgts(members);
+       ok = msgts.deserializeROSmessage(sd, ros_message, nullptr);
+     } else {
++      // the failed lookup set the rcutils error state; reset it as get_typesupport() does
++      rcutils_reset_error();
+       if ((ts =
+         get_message_typesupport_handle(
+           type_support, rosidl_typesupport_introspection_cpp::typesupport_identifier)) != nullptr)
+@@ -1853,6 +1855,7 @@
+         MessageTypeSupport_cpp msgts(members);
+         ok = msgts.deserializeROSmessage(sd, ros_message, nullptr);
+       } else {
++        rcutils_reset_error();
+         RMW_SET_ERROR_MSG("rmw_serialize: type support trouble");
+         return RMW_RET_ERROR;
+       }
